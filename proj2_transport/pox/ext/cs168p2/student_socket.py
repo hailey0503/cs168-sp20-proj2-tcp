@@ -574,6 +574,7 @@ class StudentUSocket(StudentUSocketBase):
 
       ## Start of Stage 4 ##
 
+      self.snd.nxt = self.snd.nxt |PLUS| len(p.tcp.payload)
       ## End of Stage 4 ##
       pass
 
@@ -745,6 +746,11 @@ class StudentUSocket(StudentUSocketBase):
     acceptable_seg()
     """
     ## Start of Stage 4 ##
+    #I think snd.una is supposed to technically be updated to the next ack in the segment. Calc 3,
+    # I think what you're saying about incrementing seg.ack when sending newer packets until we've received acks for our older packets is correct,
+    # which is why we just set it to seg.ack
+
+    self.snd.una = seg.ack
 
     ## End of Stage 4    ##
 
@@ -798,6 +804,13 @@ class StudentUSocket(StudentUSocketBase):
     # fifth, check ACK field
     if self.state in (ESTABLISHED, FIN_WAIT_1, FIN_WAIT_2, CLOSE_WAIT, CLOSING):
       ## Start of Stage 4 ##
+      if snd.una |LE| seg.ack and seg.ack |LT| snd.nxt:
+        self.handle_accepted_ack(seg)
+      elif seg.ack |GT| snd.una:
+        continue_after_ack = False
+      elif seg.ack |GT| snd.nxt:
+        self.set_pending_ack()
+        return
 
       ## End of Stage 4 ##
 
@@ -872,11 +885,27 @@ class StudentUSocket(StudentUSocketBase):
     bytes_sent = 0
 
     ## Start of Stage 4 ##
-    remaining = 0
-    while remaining > 0:
+    remaining = len(self.tx_data)
 
+    while remaining > 0:
+      payload = []
+      max_payload_size = self.mss
+      if self.snd.wnd < self.mss:
+        max_payload_size = self.snd.wnd
+      if remaining | GT | max_payload_size:
+        payload = self.tx_data[:max_payload_size]
+      else:
+        payload = self.tx_data
+
+      self.tx_data = self.tx_data[len(payload):]
+      remaining = len(self.tx_data)
       num_pkts += 1
       bytes_sent += len(payload)
+      newPacket = self.new_packet(True, payload, False)
+      self.tx(newPacket)
+      if bytes_sent |GT| snd.wnd:
+        break
+
 
     self.log.debug("sent {0} packets with {1} bytes total".format(num_pkts, bytes_sent))
     ## End of Stage 4 ##

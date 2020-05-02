@@ -524,6 +524,12 @@ class StudentUSocket(StudentUSocketBase):
     Begins the TCP handshake by initializing the socket and sends a SYN to the peer.
     Called by POX.
     """
+    """ Build a new packet with the SYN flag set, transmit this packet, 
+        and change the connection state to SYN_SENT. 
+        Remember to manually set the sequence number for this packet to the initial sequence number. 
+        
+        variable in connect() that we are suppose to use to access the information for the initial sequence number
+    """
     assert self.state is CLOSED
     assert not self.is_bound
 
@@ -541,6 +547,13 @@ class StudentUSocket(StudentUSocketBase):
     self.bind(dev.ip_addr, 0)
 
     ## Start of Stage 1 ##
+    newPacket = self.new_packet(False, None, True)
+    newPacket.tcp.seq = self.snd.iss
+    self.tx(newPacket)
+    self.state = SYN_SENT
+
+
+
 
     ## End of Stage 1 ##
 
@@ -579,7 +592,11 @@ class StudentUSocket(StudentUSocketBase):
     * Try to send data, since the new packet may have changed the windows
       such that we now can
     * Send pending ACKs and FINs
+
+    ***if the current state is SYN_SENT, it calls handle_synsent() with the new segment.
+
     """
+
     seg = p.tcp
     payload = p.app
 
@@ -588,7 +605,8 @@ class StudentUSocket(StudentUSocketBase):
     if self.state is CLOSED:
       return
     ## Start of Stage 1 ##
-
+    if self.state is SYN_SENT:
+      self.handle_synsent(seg)
     ## End of Stage 1 ##
     elif self.state in (ESTABLISHED, FIN_WAIT_1, FIN_WAIT_2,
                         CLOSE_WAIT, CLOSING, LAST_ACK, TIME_WAIT):
@@ -643,9 +661,14 @@ class StudentUSocket(StudentUSocketBase):
 
     if acceptable_ack:
       ## Start of Stage 1 ##
+      self.rcv.nxt = seg.seq |PLUS| 1
+      self.snd.una = seg.ack
 
       if self.snd.una |GT| self.snd.iss:
-        pass
+        self.state = ESTABLISHED
+        self.set_pending_ack()
+
+      self.update_window(seg)
 
       ## End of Stage 1 ##
 

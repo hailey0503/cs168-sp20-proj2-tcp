@@ -612,7 +612,13 @@ class StudentUSocket(StudentUSocketBase):
                         CLOSE_WAIT, CLOSING, LAST_ACK, TIME_WAIT):
       if self.acceptable_seg(seg, payload):
         ## Start of Stage 2 ##
-        
+        if self.rcv.nxt |EQ| seg.seq:
+
+          self.log.debug("rcv.nxt==seg.seq?")
+          self.handle_accepted_seg(seg, payload)
+        else:
+          self.set_pending_ack()
+
         ## End of Stage 2 ##
         pass
         ## Start of Stage 3 ##
@@ -625,6 +631,7 @@ class StudentUSocket(StudentUSocketBase):
      
     ## Start of Stage 3 ##
     # checking recv queue
+
     # Hint: data = packet.app[self.rcv.nxt |MINUS| packet.tcp.seq:]
 
     ## End of Stage 3 ##
@@ -700,7 +707,10 @@ class StudentUSocket(StudentUSocketBase):
       payload = payload[:rcv.wnd] # Chop to size!
 
     ## Start of Stage 2 ##
-
+    self.rcv.nxt = self.rcv.nxt |PLUS| len(payload)
+    self.rcv.wnd = self.rcv.wnd |MINUS| len(payload)
+    self.rx_data = self.rx_data + payload###
+    self.set_pending_ack()
     ## End of Stage 2 ##
 
   def update_window(self, seg):
@@ -827,6 +837,12 @@ class StudentUSocket(StudentUSocketBase):
       return
 
     ## Start of Stage 2 ##
+    if self.state == ESTABLISHED or self.state == FIN_WAIT_1 or self.state == FIN_WAIT_2:
+      if len(payload) > 0:
+        self.handle_accepted_payload(payload)
+    else:
+      return
+
 
     ## End of Stage 2 ##
 

@@ -732,7 +732,8 @@ class StudentUSocket(StudentUSocketBase):
     """
 
     ## Start of Stage 5 ##
-    self.snd.wnd = self.TX_DATA_MAX # remove when implemented
+    # Based on the previous post, it seems like it would the window from segment given in the input
+    self.snd.wnd = seg.win
     self.snd.wl1 = seg.seq
     self.snd.wl2 = seg.ack
 
@@ -887,11 +888,11 @@ class StudentUSocket(StudentUSocketBase):
     ## Start of Stage 4 ##
     remaining = len(self.tx_data)
 
-    while remaining > 0:
+    while remaining > 0 and self.snd.wnd > 0:
       payload = []
       max_payload_size = self.mss
-      if self.snd.wnd < self.mss:
-        max_payload_size = self.snd.wnd
+      if snd.wnd |LT| self.mss:
+        max_payload_size = snd.wnd
       if remaining | GT | max_payload_size:
         payload = self.tx_data[:max_payload_size]
       else:
@@ -901,10 +902,12 @@ class StudentUSocket(StudentUSocketBase):
       remaining = len(self.tx_data)
       num_pkts += 1
       bytes_sent += len(payload)
+
       newPacket = self.new_packet(True, payload, False)
       self.tx(newPacket)
-      if bytes_sent |GT| snd.wnd:
+      if bytes_sent |GT| snd.wnd:#what if snd.wnd = 100. self.mss = 12 bytes_sent = 108?
         break
+
 
 
     self.log.debug("sent {0} packets with {1} bytes total".format(num_pkts, bytes_sent))

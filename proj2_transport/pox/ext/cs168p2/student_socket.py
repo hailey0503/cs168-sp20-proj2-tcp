@@ -477,6 +477,9 @@ class StudentUSocket(StudentUSocketBase):
       self._delete_tcb()
     elif self.state is ESTABLISHED:
       ## Start of Stage 7 ##
+      #if the current state is ESTABLISHED, change the state to FIN_WAIT_1 and set a pending FIN.
+      self.state = FIN_WAIT_1
+      self.fin_ctrl.set_pending(FIN_WAIT_1)
 
       ## End of Stage 7 ##
       pass
@@ -484,6 +487,7 @@ class StudentUSocket(StudentUSocketBase):
       raise RuntimeError("close() is invalid in FIN_WAIT states")
     elif self.state is CLOSE_WAIT:
       ## Start of Stage 6 ##
+      self.fin_ctrl.set_pending(LAST_ACK)
 
       ## End of Stage 6 ##
       pass
@@ -568,6 +572,8 @@ class StudentUSocket(StudentUSocketBase):
 
     ## Start of Stage 8 ##
     # in Stage 8, you may need to modify what you implemented in Stage 4.
+    self.tx_ts = self.stack.now
+    if retxed == True:
 
 
     if (p.tcp.SYN or p.tcp.FIN or p.tcp.payload) and not retxed:
@@ -783,11 +789,23 @@ class StudentUSocket(StudentUSocketBase):
     self.log.info("Got FIN!")
 
     ## Start of Stage 6 ##
+    self.rcv.nxt =  self.rcv.nxt |PLUS| 1
+    self.set_pending_ack()
+    if self.state == ESTABLISHED:
+      self.state = CLOSE_WAIT
 
     ## End of Stage 6 ##
 
-
     ## Start of Stage 7 ##
+    if self.state == FIN_WAIT_1:
+      if self.fin_ctrl.acks_our_fin(seg.ack):
+        self.start_timer_timewait()
+      else:
+        self.state = CLOSING
+    if self.state == FIN_WAIT_2:
+      self.start_timer_timewait()
+      self.log.debug("finwait2222")
+
 
     ## End of Stage 7 ##
 
@@ -805,9 +823,9 @@ class StudentUSocket(StudentUSocketBase):
     # fifth, check ACK field
     if self.state in (ESTABLISHED, FIN_WAIT_1, FIN_WAIT_2, CLOSE_WAIT, CLOSING):
       ## Start of Stage 4 ##
-      if snd.una |LE| seg.ack and seg.ack |LT| snd.nxt:
+      if snd.una |LT| seg.ack and seg.ack |LE| snd.nxt:
         self.handle_accepted_ack(seg)
-      elif seg.ack |GT| snd.una:
+      elif seg.ack |LT| snd.una:
         continue_after_ack = False
       elif seg.ack |GT| snd.nxt:
         self.set_pending_ack()
@@ -822,14 +840,17 @@ class StudentUSocket(StudentUSocketBase):
     ## Start of Stage 6 ##
     ## Start of Stage 7 ##
     if self.state == FIN_WAIT_1:
-      pass
+      if self.fin_ctrl.acks_our_fin(seg.ack):
+        self.state = FIN_WAIT_2
     elif self.state == FIN_WAIT_2:
       if self.retx_queue.empty():
         self.set_pending_ack()
     elif self.state == CLOSING:
-      pass
+      if self.fin_ctrl.acks_our_fin(seg.ack):
+        self.start_timer_timewait()
     elif self.state == LAST_ACK:
-      pass
+      if self.fin_ctrl.acks_our_fin(seg.ack):
+        self._delete_tcb()
     elif self.state == TIME_WAIT:
       # restart the 2 msl timeout
       self.set_pending_ack()
@@ -857,6 +878,7 @@ class StudentUSocket(StudentUSocketBase):
 
     continue_after_ack = self.check_ack(seg)
     if not continue_after_ack:
+      self.log.debug("line 879")
       return
 
     ## Start of Stage 2 ##
@@ -864,6 +886,7 @@ class StudentUSocket(StudentUSocketBase):
       if len(payload) > 0:
         self.handle_accepted_payload(payload)
     else:
+      self.log.debug("line 887")
       return
 
 
@@ -872,6 +895,7 @@ class StudentUSocket(StudentUSocketBase):
     # eight, check FIN bit
     if seg.FIN:
       self.handle_accepted_fin(seg)
+
 
   def maybe_send(self):
     """

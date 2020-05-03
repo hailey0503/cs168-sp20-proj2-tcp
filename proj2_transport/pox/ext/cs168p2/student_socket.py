@@ -572,12 +572,10 @@ class StudentUSocket(StudentUSocketBase):
 
     ## Start of Stage 8 ##
     # in Stage 8, you may need to modify what you implemented in Stage 4.
-    self.tx_ts = self.stack.now
-    if retxed == True:
-
 
     if (p.tcp.SYN or p.tcp.FIN or p.tcp.payload) and not retxed:
-
+      p.tx_ts = self.stack.now
+      self.retx_queue.push(p)
       ## Start of Stage 4 ##
 
       self.snd.nxt = self.snd.nxt |PLUS| len(p.tcp.payload)
@@ -753,9 +751,6 @@ class StudentUSocket(StudentUSocketBase):
     acceptable_seg()
     """
     ## Start of Stage 4 ##
-    #I think snd.una is supposed to technically be updated to the next ack in the segment. Calc 3,
-    # I think what you're saying about incrementing seg.ack when sending newer packets until we've received acks for our older packets is correct,
-    # which is why we just set it to seg.ack
 
     self.snd.una = seg.ack
 
@@ -763,6 +758,8 @@ class StudentUSocket(StudentUSocketBase):
 
 
     ## Start of Stage 8 ##
+    # we have to remove packets from the retransmission queue when they are ACKed
+    self.retx_queue.pop_upto(seg.ack)
 
     ## End of Stage 8 ##
 
@@ -823,7 +820,7 @@ class StudentUSocket(StudentUSocketBase):
     # fifth, check ACK field
     if self.state in (ESTABLISHED, FIN_WAIT_1, FIN_WAIT_2, CLOSE_WAIT, CLOSING):
       ## Start of Stage 4 ##
-      if snd.una |LT| seg.ack and seg.ack |LE| snd.nxt:
+      if snd.una |LE| seg.ack and seg.ack |LE| snd.nxt:
         self.handle_accepted_ack(seg)
       elif seg.ack |LT| snd.una:
         continue_after_ack = False
@@ -959,11 +956,19 @@ class StudentUSocket(StudentUSocketBase):
     """
 
     ## Start of Stage 8 ##
-    time_in_queue = 0 # modify when implemented
+    time_in_queue = 0
+    if not self.retx_queue.empty():
+      #p = self.retx_queue.peek()[1]
+      p = self.retx_queue.get_earliest_pkt()[1]
+      self.log.debug("earlistpkt_1")
+
+      time_in_queue = self.stack.now - p.tx_ts
+
 
     ## End of Stage 8 ##
 
     if time_in_queue > self.rto:
+
       self.log.debug("earliest packet seqno={0} rto={1} being rtxed".format(p.tcp.seq, self.rto))
       self.tx(p, retxed=True)
 

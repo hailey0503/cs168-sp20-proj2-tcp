@@ -701,6 +701,26 @@ class StudentUSocket(StudentUSocketBase):
     """
 
     ## Start of Stage 9 ##
+    #How are we supposed to know if we are making the first RTT measurement?
+    # self.srtt is initialized to 0, once it's undated it won't be.
+    #The RTT (Round Trip Time) is defined as the difference between the time a packet was sent and the time at which its ACK was received.
+    # We can compute this number by using the tx_ts attribute you set when transmitting a packet in the previous stage.
+    RTT = self.stack.now - acked_pkt.tx_ts
+    #self.log.debug("{0} RTT {1} stack.now {2} acked_pkt.tx".format(RTT, self.stack.now, acked_pkt.tx_ts))
+
+    if self.srtt == 0:
+      self.srtt = RTT
+      self.rttvar = RTT / 2
+      self.rto = self.srtt + max(self.G, self.K * self.rttvar)
+
+    else:
+      self.rttvar = (1 - self.beta) * self.rttvar + self.beta * abs(self.srtt - RTT)
+      self.srtt = (1 - self.alpha) * self.srtt + self.alpha * RTT
+      self.rto = self.srtt + max(self.G, self.K * self.rttvar)
+
+    self.rto = min(self.rto, self.MAX_RTO)
+    self.rto = max(self.rto, self.MIN_RTO)
+    #self.log.debug("{0} srtt {1} rttvar {2} rto".format(self.srtt, self.rttvar, self.rto))
 
     ## End of Stage 9 ##
 
@@ -759,18 +779,17 @@ class StudentUSocket(StudentUSocketBase):
 
     ## Start of Stage 8 ##
     # we have to remove packets from the retransmission queue when they are ACKed
-    self.retx_queue.pop_upto(seg.ack)
+    acked_pkts = self.retx_queue.pop_upto(seg.ack)
 
     ## End of Stage 8 ##
 
 
     ## Start of Stage 9 ##
 
-    acked_pkts = [] # remove when implemented
     for (ackno, p) in acked_pkts:
       if not p.retxed:
         self.update_rto(p)
-    
+
     ## End of Stage 9 ##
 
   def handle_accepted_fin(self, seg):
@@ -801,7 +820,6 @@ class StudentUSocket(StudentUSocketBase):
         self.state = CLOSING
     if self.state == FIN_WAIT_2:
       self.start_timer_timewait()
-      self.log.debug("finwait2222")
 
 
     ## End of Stage 7 ##
@@ -875,7 +893,6 @@ class StudentUSocket(StudentUSocketBase):
 
     continue_after_ack = self.check_ack(seg)
     if not continue_after_ack:
-      self.log.debug("line 879")
       return
 
     ## Start of Stage 2 ##
@@ -883,7 +900,6 @@ class StudentUSocket(StudentUSocketBase):
       if len(payload) > 0:
         self.handle_accepted_payload(payload)
     else:
-      self.log.debug("line 887")
       return
 
 
@@ -907,29 +923,23 @@ class StudentUSocket(StudentUSocketBase):
     bytes_sent = 0
 
     ## Start of Stage 4 ##
-    remaining = len(self.tx_data)
+    remaining = min(len(self.tx_data), snd.wnd |MINUS| (snd.nxt |MINUS| snd.una))
 
-    while remaining > 0 and self.snd.wnd > 0:
-      payload = []
-      max_payload_size = self.mss
-      if snd.wnd |LT| self.mss:
-        max_payload_size = snd.wnd
-      if remaining | GT | max_payload_size:
-        payload = self.tx_data[:max_payload_size]
-      else:
-        payload = self.tx_data
+    while remaining > 0:
+      max_payload_size = min(self.mss, remaining)
+
+      payload = self.tx_data[:max_payload_size]
 
       self.tx_data = self.tx_data[len(payload):]
-      remaining = len(self.tx_data)
+      remaining = remaining - len(payload)
       num_pkts += 1
       bytes_sent += len(payload)
 
       newPacket = self.new_packet(True, payload, False)
       self.tx(newPacket)
-      if bytes_sent |GT| snd.wnd:#what if snd.wnd = 100. self.mss = 12 bytes_sent = 108?
-        break
 
-
+      #if bytes_sent |GT| snd.wnd #what if snd.wnd = 100. self.mss = 12 bytes_sent = 108?
+       #break
 
     self.log.debug("sent {0} packets with {1} bytes total".format(num_pkts, bytes_sent))
     ## End of Stage 4 ##
@@ -973,7 +983,9 @@ class StudentUSocket(StudentUSocketBase):
       self.tx(p, retxed=True)
 
       ## Start of Stage 9 ##
-
+      self.rto = self.rto * 2
+      if self.rto > self.MAX_RTO:
+        self.rto = self.MAX_RTO
       ## End of Stage 9 ##
 
   def set_pending_ack(self):
@@ -995,5 +1007,5 @@ class StudentUSocket(StudentUSocketBase):
 # Project 2 Survey
 def proj2_survey():
   import hashlib
-  secret_word = ""
-  return hashlib.sha256(secret_word.encode('utf-8')).hexdigest()
+  secret_word = "udp"
+  return secret_word
